@@ -1,9 +1,17 @@
 package compass_system.headmate_labeller
 
-fun main(args: Array<String>) {
-    println("Hello World!")
+import com.kotlindiscord.kord.extensions.ExtensibleBot
+import com.kotlindiscord.kord.extensions.utils.env
+import compass_system.headmate_labeller.extensions.HeadmateLabellerExtension
 
-    // Try adding program arguments via Run/Debug configuration.
-    // Learn more about running applications: https://www.jetbrains.com/help/idea/running-applications.html.
-    println("Program arguments: ${args.joinToString()}")
+private val TOKEN = env("TOKEN")
+
+suspend fun main() {
+    val bot = ExtensibleBot(TOKEN) {
+        extensions {
+            add(::HeadmateLabellerExtension)
+        }
+    }
+
+    bot.start()
 }
