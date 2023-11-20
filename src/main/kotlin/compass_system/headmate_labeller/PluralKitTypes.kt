@@ -1,5 +1,6 @@
 package compass_system.headmate_labeller
 
+import kotlinx.datetime.Instant
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import java.lang.IllegalStateException
@@ -21,9 +22,11 @@ data class PkMember(
 	@SerialName("display_name")
 	val displayName: String?,
 	val color: String?,
+	val birthday: Instant?,
 	val pronouns: String?,
 	@SerialName("avatar_url")
 	val avatarUrl: String?,
+	val created: Instant,
 	@SerialName("proxy_tags")
 	val proxyTags: List<PkProxy>
 )

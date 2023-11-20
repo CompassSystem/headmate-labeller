@@ -3,6 +3,7 @@ package compass_system.headmate_labeller.extensions
 import com.kotlindiscord.kord.extensions.DISCORD_BLURPLE
 import com.kotlindiscord.kord.extensions.checks.hasPermission
 import com.kotlindiscord.kord.extensions.commands.Arguments
+import com.kotlindiscord.kord.extensions.commands.converters.impl.optionalString
 import com.kotlindiscord.kord.extensions.commands.converters.impl.string
 import com.kotlindiscord.kord.extensions.extensions.Extension
 import com.kotlindiscord.kord.extensions.extensions.ephemeralSlashCommand
@@ -24,7 +25,6 @@ import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import kotlinx.coroutines.flow.filter
 import kotlinx.serialization.json.Json
-import mu.KotlinLogging
 
 class HeadmateLabellerExtension : Extension() {
 	override val name = "headmate-labeller"
@@ -44,45 +44,46 @@ class HeadmateLabellerExtension : Extension() {
 						})
 					}
 				}
-				val systemExportUrl = this.arguments.url
+				val systemExportUrl = arguments.url
+				val headmatesToIgnore = arguments.ignore?.lowercase()?.split(",")?.toSet() ?: emptySet()
 
 				val response = try {
-				    client.get(systemExportUrl)
+					client.get(systemExportUrl)
 				} catch (e: Exception) {
-				    respond {
-				        content = "Error: ${e.message}"
-				    }
-				    return@action
+					respond {
+						content = "Error: ${e.message}"
+					}
+					return@action
 				}
 
 				if (response.status.value != 200) {
-				    respond {
-				        content = "Error, invalid response code: ${response.status}"
-				    }
-				    return@action
+					respond {
+						content = "Error, invalid response code: ${response.status}"
+					}
+					return@action
 				}
 
 				if (response.contentType()?.match(ContentType.Application.Json) == false) {
 					respond {
-				        content = "Error, expected json, found: ${response.contentType()}"
-				    }
-				    return@action
+						content = "Error, expected json, found: ${response.contentType()}"
+					}
+					return@action
 				}
 
 				val system = try {
 					response.body<PkSystem>()
 				} catch (e: Exception) {
 					respond {
-				        content = "Error, invalid json: ${e.message}"
-				    }
-				    return@action
+						content = "Error, invalid json: ${e.message}"
+					}
+					return@action
 				}
 
 				val channel = this.getChannel().asChannelOfOrNull<TextChannel>() ?: run {
 					respond {
-				        content = "Error, invalid channel."
-				    }
-				    return@action
+						content = "Error, invalid channel."
+					}
+					return@action
 				}
 
 				var potentialError: String? = null
@@ -119,9 +120,10 @@ class HeadmateLabellerExtension : Extension() {
 					return@action
 				}
 
-				val headmates = system.members
-
-				val headmatesToAdd = headmates.filter { it.id !in foundHeadmates }
+				val headmatesToAdd = system.members
+					.filter { it.id !in foundHeadmates }
+					.filter { !(it.id in headmatesToIgnore || it.name.lowercase() in headmatesToIgnore) }
+					.sortedBy { it.birthday ?: it.created }
 
 				val headerNeedsCreating = !foundHeader && headmatesToAdd.isNotEmpty()
 
@@ -147,6 +149,7 @@ class HeadmateLabellerExtension : Extension() {
 					channel.createEmbed {
 						title = headmateTitle
 						color = headmate.color?.let { Color(it.toInt(16)) } ?: DISCORD_BLURPLE
+						image = "https://cdn.discordapp.com/attachments/1174045814977470515/1176104313488166973/filler.png?ex=656da77f&is=655b327f&hm=155beede235706da155f64ddf6167c39b31f624739671d5a70f43daa2ad9f390&"
 
 						thumbnail {
 							url = headmate.avatarUrl ?: "https://discord.com/assets/5d6a5e9d7d77ac29116e.png"
@@ -194,6 +197,11 @@ class CreateListArgs : Arguments() {
 	val url by string {
 		name = "url"
 		description = "The url of the system export."
+	}
+
+	val ignore by optionalString {
+		name = "ignore"
+		description = "Comma separated list of headmate ids or names to ignore."
 	}
 }
 
