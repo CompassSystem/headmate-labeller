@@ -149,7 +149,7 @@ class HeadmateLabellerExtension : Extension() {
 					channel.createEmbed {
 						title = headmateTitle
 						color = headmate.color?.let { Color(it.toInt(16)) } ?: DISCORD_BLURPLE
-						image = "https://cdn.discordapp.com/attachments/1174045814977470515/1176104313488166973/filler.png?ex=656da77f&is=655b327f&hm=155beede235706da155f64ddf6167c39b31f624739671d5a70f43daa2ad9f390&"
+						image = "https://raw.githubusercontent.com/CompassSystem/headmate-labeller/main/resources/filler.png"
 
 						thumbnail {
 							url = headmate.avatarUrl ?: "https://discord.com/assets/5d6a5e9d7d77ac29116e.png"
