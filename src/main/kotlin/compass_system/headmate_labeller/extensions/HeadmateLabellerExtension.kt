@@ -6,11 +6,11 @@ import com.kotlindiscord.kord.extensions.commands.Arguments
 import com.kotlindiscord.kord.extensions.commands.application.slash.EphemeralSlashCommandContext
 import com.kotlindiscord.kord.extensions.commands.application.slash.ephemeralSubCommand
 import com.kotlindiscord.kord.extensions.commands.converters.impl.optionalString
-import com.kotlindiscord.kord.extensions.commands.converters.impl.string
 import com.kotlindiscord.kord.extensions.components.forms.ModalForm
 import com.kotlindiscord.kord.extensions.extensions.Extension
 import com.kotlindiscord.kord.extensions.extensions.ephemeralSlashCommand
 import com.kotlindiscord.kord.extensions.types.respond
+import compass_system.headmate_labeller.PkMember
 import compass_system.headmate_labeller.PkSystem
 import dev.kord.common.Color
 import dev.kord.common.entity.Permission
@@ -22,16 +22,20 @@ import dev.kord.core.supplier.EntitySupplyStrategy
 import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.engine.cio.*
+import io.ktor.client.plugins.*
 import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.request.*
-import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import kotlinx.coroutines.flow.filter
 import kotlinx.serialization.json.Json
-import java.lang.RuntimeException
+import mu.KotlinLogging
 
-class HeadmateLabellerExtension : Extension() {
+class HeadmateLabellerExtension(private val pluralKitToken: String) : Extension() {
 	override val name = "headmate-labeller"
+	private val apiBaseUrl = "https://api.pluralkit.me/v2"
+	private val logger = KotlinLogging.logger("headmate-labeller")
+	private var system: PkSystem? = null
+
 	override suspend fun setup() {
 		ephemeralSlashCommand {
 			name = "headmate-labeller"
@@ -39,30 +43,43 @@ class HeadmateLabellerExtension : Extension() {
 
 			check { hasPermission(Permission.Administrator) }
 
-			ephemeralSubCommand(::CreateListArgs) {
+			ephemeralSubCommand(::IgnoredHeadmateArgs) {
 				name = "list"
 				description = "Create or update a list of headmates."
 
 				action { upsertHeadmateList() }
 			}
 
-			ephemeralSubCommand(::CreateListArgs) {
+			ephemeralSubCommand(::IgnoredHeadmateArgs) {
 				name = "purge"
 				description = "Delete headmate embeds missing from export."
 
 				action { purgeHeadmateList() }
 			}
+
+			ephemeralSubCommand {
+				name = "refresh"
+				description = "Refresh the PluralKit system cache."
+
+				action { refreshSystem() }
+			}
+		}
+
+		system = try {
+			getPluralKitSystem()
+		} catch (e: Exception) {
+			logger.error(e) { "Failed to get PluralKit system." }
+
+			null
 		}
 	}
 
-	private suspend fun EphemeralSlashCommandContext<CreateListArgs, ModalForm>.upsertHeadmateList() {
+	private suspend fun EphemeralSlashCommandContext<IgnoredHeadmateArgs, ModalForm>.upsertHeadmateList() {
 		val headmatesToIgnore = arguments.ignore?.lowercase()?.split(",")?.toSet() ?: emptySet()
 
-		val system = try {
-			getPkSystem(arguments.url)
-		} catch (e: Exception) {
+		val system = this@HeadmateLabellerExtension.system ?: run {
 			respond {
-				content = e.message ?: throw IllegalStateException("No error message found.")
+				content = "Error, previously failed to get PluralKit system. Please run `/headmate-labeller refresh` first."
 			}
 
 			return
@@ -180,14 +197,12 @@ class HeadmateLabellerExtension : Extension() {
 		}
 	}
 
-	private suspend fun EphemeralSlashCommandContext<CreateListArgs, ModalForm>.purgeHeadmateList() {
+	private suspend fun EphemeralSlashCommandContext<IgnoredHeadmateArgs, ModalForm>.purgeHeadmateList() {
 		val headmatesToIgnore = arguments.ignore?.lowercase()?.split(",")?.toSet() ?: emptySet()
 
-		val system = try {
-			getPkSystem(arguments.url)
-		} catch (e: Exception) {
+		val system = this@HeadmateLabellerExtension.system ?: run {
 			respond {
-				content = e.message ?: throw IllegalStateException("No error message found.")
+				content = "Error, previously failed to get PluralKit system. Please run `/headmate-labeller refresh` first."
 			}
 
 			return
@@ -229,8 +244,33 @@ class HeadmateLabellerExtension : Extension() {
 		}
 	}
 
-	private suspend fun getPkSystem(url: String): PkSystem {
+	private suspend fun EphemeralSlashCommandContext<Arguments, ModalForm>.refreshSystem() {
+		system = try {
+			getPluralKitSystem()
+		} catch (e: Exception) {
+			respond {
+				content = "Failed to refresh the PluralKit system."
+			}
+
+			logger.error(e) { "Failed to refresh the PluralKit system." }
+
+			return
+		}
+
+		respond {
+			content = "Refreshed PluralKit system."
+		}
+	}
+
+	private suspend fun getPluralKitSystem(): PkSystem {
 		val client = HttpClient(CIO) {
+			defaultRequest {
+				headers {
+					append("Authorization", pluralKitToken)
+					append("User-Agent", "headmate-labeller/2.0.0-alpha.1")
+				}
+			}
+
 			install(ContentNegotiation) {
 				json(Json {
 					ignoreUnknownKeys = true
@@ -238,34 +278,20 @@ class HeadmateLabellerExtension : Extension() {
 			}
 		}
 
-		val response = try {
-			client.get(url)
-		} catch (e: Exception) {
-			throw RuntimeException("Error: ${e.message}")
-		}
+		val system = client.get("${apiBaseUrl}/systems/@me").body<PkSystem>()
+		val members = client.get("${apiBaseUrl}/systems/@me/members").body<List<PkMember>>()
 
-		if (response.status.value != 200) {
-			throw RuntimeException("Error, invalid response code: ${response.status}")
-		}
-
-		if (response.contentType()?.match(ContentType.Application.Json) == false) {
-			throw RuntimeException("Error, expected json, found: ${response.contentType()}")
-		}
-
-		return try {
-			response.body<PkSystem>()
-		} catch (e: Exception) {
-			throw RuntimeException("Error, invalid json: ${e.message}")
-		}
+		return PkSystem(
+			system.id,
+			system.name,
+			system.tag,
+			members,
+			system.avatarUrl
+		)
 	}
 }
 
-class CreateListArgs : Arguments() {
-	val url by string {
-		name = "url"
-		description = "The url of the system export."
-	}
-
+class IgnoredHeadmateArgs : Arguments() {
 	val ignore by optionalString {
 		name = "ignore"
 		description = "Comma separated list of headmate ids or names to ignore."

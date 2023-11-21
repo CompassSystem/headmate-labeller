@@ -16,7 +16,7 @@ data class PkSystem(
 	val id: String,
 	val name: String,
 	val tag: String?,
-	val members: List<PkMember>,
+	val members: List<PkMember> = emptyList(),
 	@SerialName("avatar_url")
 	val avatarUrl: String?
 )
