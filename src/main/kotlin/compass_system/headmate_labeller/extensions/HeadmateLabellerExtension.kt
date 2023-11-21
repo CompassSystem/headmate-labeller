@@ -230,7 +230,7 @@ class HeadmateLabellerExtension(private val pluralKitToken: String) : Extension(
 					val headmateId = footerText?.takeLast(5)
 
 					if (!(headmateId in headmatesToIgnore || headmateName in headmatesToIgnore)) {
-						if (system.members.find {headmate -> headmate.id == headmateId } == null) {
+						if (system.members.find { headmate -> headmate.id == headmateId } == null) {
 							it.delete()
 
 							deletedCount++

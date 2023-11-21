@@ -10,15 +10,15 @@ private val TEST_GUILD = envOrNull("TEST_GUILD")
 private val PLURALKIT_TOKEN = env("PLURALKIT_TOKEN")
 
 suspend fun main() {
-    val bot = ExtensibleBot(TOKEN) {
+	val bot = ExtensibleBot(TOKEN) {
 		applicationCommands {
 			TEST_GUILD?.let { defaultGuild(it) }
 		}
 
-        extensions {
-            add { HeadmateLabellerExtension(PLURALKIT_TOKEN) }
-        }
-    }
+		extensions {
+			add { HeadmateLabellerExtension(PLURALKIT_TOKEN) }
+		}
+	}
 
-    bot.start()
+	bot.start()
 }
