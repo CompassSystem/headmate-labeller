@@ -28,6 +28,7 @@ import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import kotlinx.coroutines.flow.filter
 import kotlinx.serialization.json.Json
+import java.lang.RuntimeException
 
 class HeadmateLabellerExtension : Extension() {
 	override val name = "headmate-labeller"
@@ -44,51 +45,24 @@ class HeadmateLabellerExtension : Extension() {
 
 				action { upsertHeadmateList() }
 			}
+
+			ephemeralSubCommand(::CreateListArgs) {
+				name = "purge"
+				description = "Delete headmate embeds missing from export."
+
+				action { purgeHeadmateList() }
+			}
 		}
 	}
 
 	private suspend fun EphemeralSlashCommandContext<CreateListArgs, ModalForm>.upsertHeadmateList() {
-		val client = HttpClient(CIO) {
-			install(ContentNegotiation) {
-				json(Json {
-					ignoreUnknownKeys = true
-				})
-			}
-		}
-		val systemExportUrl = arguments.url
 		val headmatesToIgnore = arguments.ignore?.lowercase()?.split(",")?.toSet() ?: emptySet()
 
-		val response = try {
-			client.get(systemExportUrl)
-		} catch (e: Exception) {
-			respond {
-				content = "Error: ${e.message}"
-			}
-
-			return
-		}
-
-		if (response.status.value != 200) {
-			respond {
-				content = "Error, invalid response code: ${response.status}"
-			}
-
-			return
-		}
-
-		if (response.contentType()?.match(ContentType.Application.Json) == false) {
-			respond {
-				content = "Error, expected json, found: ${response.contentType()}"
-			}
-
-			return
-		}
-
 		val system = try {
-			response.body<PkSystem>()
+			getPkSystem(arguments.url)
 		} catch (e: Exception) {
 			respond {
-				content = "Error, invalid json: ${e.message}"
+				content = e.message ?: throw IllegalStateException("No error message found.")
 			}
 
 			return
@@ -96,7 +70,7 @@ class HeadmateLabellerExtension : Extension() {
 
 		val channel = this.getChannel().asChannelOfOrNull<TextChannel>() ?: run {
 			respond {
-				content = "Error, invalid channel."
+				content = "Error, invalid channel, must be run in a text channel."
 			}
 
 			return
@@ -203,6 +177,85 @@ class HeadmateLabellerExtension : Extension() {
 
 		respond {
 			content = "Created " + (if (headerNeedsCreating) "header and " else "") + "${headmatesToAdd.size} headmate embeds."
+		}
+	}
+
+	private suspend fun EphemeralSlashCommandContext<CreateListArgs, ModalForm>.purgeHeadmateList() {
+		val headmatesToIgnore = arguments.ignore?.lowercase()?.split(",")?.toSet() ?: emptySet()
+
+		val system = try {
+			getPkSystem(arguments.url)
+		} catch (e: Exception) {
+			respond {
+				content = e.message ?: throw IllegalStateException("No error message found.")
+			}
+
+			return
+		}
+
+		val channel = this.getChannel().asChannelOfOrNull<TextChannel>() ?: run {
+			respond {
+				content = "Error, invalid channel, must be run in a text channel."
+			}
+
+			return
+		}
+
+		var deletedCount = 0
+
+		channel.withStrategy(EntitySupplyStrategy.rest)
+			.getMessagesBefore(Snowflake.max)
+			.filter { it.author?.id == event.kord.selfId }
+			.collect {
+				if (it.embeds.size == 1) {
+					val embed = it.embeds.first()
+
+					val footerText: String? = embed.footer?.text
+					val headmateName = embed.fields.find { field -> field.name == "Name" }?.value ?: embed.title!!
+					val headmateId = footerText?.takeLast(5)
+
+					if (!(headmateId in headmatesToIgnore || headmateName in headmatesToIgnore)) {
+						if (system.members.find {headmate -> headmate.id == headmateId } == null) {
+							it.delete()
+
+							deletedCount++
+						}
+					}
+				}
+			}
+
+		respond {
+			content = "Deleted $deletedCount headmate embeds."
+		}
+	}
+
+	private suspend fun getPkSystem(url: String): PkSystem {
+		val client = HttpClient(CIO) {
+			install(ContentNegotiation) {
+				json(Json {
+					ignoreUnknownKeys = true
+				})
+			}
+		}
+
+		val response = try {
+			client.get(url)
+		} catch (e: Exception) {
+			throw RuntimeException("Error: ${e.message}")
+		}
+
+		if (response.status.value != 200) {
+			throw RuntimeException("Error, invalid response code: ${response.status}")
+		}
+
+		if (response.contentType()?.match(ContentType.Application.Json) == false) {
+			throw RuntimeException("Error, expected json, found: ${response.contentType()}")
+		}
+
+		return try {
+			response.body<PkSystem>()
+		} catch (e: Exception) {
+			throw RuntimeException("Error, invalid json: ${e.message}")
 		}
 	}
 }
