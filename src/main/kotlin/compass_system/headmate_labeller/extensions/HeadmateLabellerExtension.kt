@@ -52,7 +52,7 @@ class HeadmateLabellerExtension(private val pluralKitToken: String) : Extension(
 
 			ephemeralSubCommand(::IgnoredHeadmateArgs) {
 				name = "purge"
-				description = "Delete headmate embeds missing from export."
+				description = "Delete headmate embeds that are missing from the PluralKit system."
 
 				action { purgeHeadmateList() }
 			}
@@ -267,7 +267,7 @@ class HeadmateLabellerExtension(private val pluralKitToken: String) : Extension(
 			defaultRequest {
 				headers {
 					append("Authorization", pluralKitToken)
-					append("User-Agent", "headmate-labeller/2.0.0-alpha.1")
+					append("User-Agent", "headmate-labeller/2.0.0")
 				}
 			}
 

@@ -6,20 +6,25 @@ This is a simple discord bot which allows you to create a list of headmates in a
 This project may end up being integrated into my [general purpose plural bot](https://gitlab.com/Compass_System/compass-plural-bot).
 
 Sample Output (for our pluralkit system):
-![A header, "Compasses 🧭" followed by embeds for Lorielle Sinclaire, Teddy, Needle, Quint, and Ellie/World, showing pronouns, proxytags and sometimes the headmate name if display name doesn't match.](./resources/sample_output.png)
+
+![A header, "Compasses 🧭" followed by embeds for Quill, Ellie, Emmet!, Needle, and Snake, showing pronouns, proxytags, and sometimes the headmate name if display name doesn't match.](./resources/sample_output.png)
+
+## Setup
+1. Download the latest release [here](https://github.com/CompassSystem/headmate-labeller/releases/tag/latest) and extract it into its own folder.
+2. Create a file in the same directory called `.env` and fill out the following:
+```
+DISCORD_TOKEN=token_for_your_discord_bot
+PLURALKIT_TOKEN=token_for_your_pluralkit_system
+
+# Optional - if you want to only sync commands with your guild
+TEST_GUILD=your_discord_guild_id
+```
+3. Run the bot by running `java -jar headmate-labeller-x.y.z.jar` where x.y.z is the release version.
+
 ## Usage
-For now, as I have not needed to use this project much I have just been running it inside Intellij IDEA.
-
-Firstly you will need to create a run directory in the project root and then create a file inside that directory called `.env`
-
-Inside that file you will need to specify the discord bot token like so:
+The following commands are available:
 ```
-TOKEN=your_token_here
-```
-
-Then you can run the project from inside Intellij IDEA, `gradlew :run`.
-
-Once in the channel you would like to create the list in you can run the only command:
-```
-/create-list [url: url to system export] [ignore: optional comma seperated list of headmate id/names to ignore]
+/headmate-labeller list [ignore] - Create or update a list of headmates. Optionally ignoring a comma seperated list of headmate names or ids.
+/headmate-labeller purge [ignore] - Delete headmate embeds that are missing from the PluralKit system.  Optionally ignoring a comma seperated list of headmate names or ids.
+/headmate-labeller refresh - Refresh the PluralKit system cache.
 ```

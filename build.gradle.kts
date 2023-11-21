@@ -10,7 +10,7 @@ plugins {
 }
 
 group = "compass_system.headmate-labeller"
-version = "2.0.0-alpha.1"
+version = "2.0.0"
 
 repositories {
     google()
