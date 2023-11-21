@@ -3,11 +3,14 @@ package compass_system.headmate_labeller.extensions
 import com.kotlindiscord.kord.extensions.DISCORD_BLURPLE
 import com.kotlindiscord.kord.extensions.checks.hasPermission
 import com.kotlindiscord.kord.extensions.commands.Arguments
+import com.kotlindiscord.kord.extensions.commands.application.slash.EphemeralSlashCommandContext
+import com.kotlindiscord.kord.extensions.commands.application.slash.ephemeralSubCommand
 import com.kotlindiscord.kord.extensions.commands.converters.impl.optionalString
-import com.kotlindiscord.kord.extensions.commands.converters.impl.string
+import com.kotlindiscord.kord.extensions.components.forms.ModalForm
 import com.kotlindiscord.kord.extensions.extensions.Extension
 import com.kotlindiscord.kord.extensions.extensions.ephemeralSlashCommand
 import com.kotlindiscord.kord.extensions.types.respond
+import compass_system.headmate_labeller.PkMember
 import compass_system.headmate_labeller.PkSystem
 import dev.kord.common.Color
 import dev.kord.common.entity.Permission
@@ -19,186 +22,276 @@ import dev.kord.core.supplier.EntitySupplyStrategy
 import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.engine.cio.*
+import io.ktor.client.plugins.*
 import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.request.*
-import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import kotlinx.coroutines.flow.filter
 import kotlinx.serialization.json.Json
+import mu.KotlinLogging
 
-class HeadmateLabellerExtension : Extension() {
+class HeadmateLabellerExtension(private val pluralKitToken: String) : Extension() {
 	override val name = "headmate-labeller"
+	private val apiBaseUrl = "https://api.pluralkit.me/v2"
+	private val logger = KotlinLogging.logger("headmate-labeller")
+	private var system: PkSystem? = null
+
 	override suspend fun setup() {
-		ephemeralSlashCommand(::CreateListArgs) {
-			name = "create-list"
-			description = "Create a new list of headmates."
+		ephemeralSlashCommand {
+			name = "headmate-labeller"
+			description = "Headmate labeller commands."
 
 			check { hasPermission(Permission.Administrator) }
 
-			action {
+			ephemeralSubCommand(::IgnoredHeadmateArgs) {
+				name = "list"
+				description = "Create or update a list of headmates."
 
-				val client = HttpClient(CIO) {
-					install(ContentNegotiation) {
-						json(Json {
-							ignoreUnknownKeys = true
-						})
-					}
-				}
-				val systemExportUrl = arguments.url
-				val headmatesToIgnore = arguments.ignore?.lowercase()?.split(",")?.toSet() ?: emptySet()
+				action { upsertHeadmateList() }
+			}
 
-				val response = try {
-					client.get(systemExportUrl)
-				} catch (e: Exception) {
-					respond {
-						content = "Error: ${e.message}"
-					}
-					return@action
-				}
+			ephemeralSubCommand(::IgnoredHeadmateArgs) {
+				name = "purge"
+				description = "Delete headmate embeds that are missing from the PluralKit system."
 
-				if (response.status.value != 200) {
-					respond {
-						content = "Error, invalid response code: ${response.status}"
-					}
-					return@action
-				}
+				action { purgeHeadmateList() }
+			}
 
-				if (response.contentType()?.match(ContentType.Application.Json) == false) {
-					respond {
-						content = "Error, expected json, found: ${response.contentType()}"
-					}
-					return@action
-				}
+			ephemeralSubCommand {
+				name = "refresh"
+				description = "Refresh the PluralKit system cache."
 
-				val system = try {
-					response.body<PkSystem>()
-				} catch (e: Exception) {
-					respond {
-						content = "Error, invalid json: ${e.message}"
-					}
-					return@action
-				}
-
-				val channel = this.getChannel().asChannelOfOrNull<TextChannel>() ?: run {
-					respond {
-						content = "Error, invalid channel."
-					}
-					return@action
-				}
-
-				var potentialError: String? = null
-				var foundHeader = false
-				val foundHeadmates = mutableSetOf<String>()
-
-				channel.withStrategy(EntitySupplyStrategy.rest)
-					.getMessagesBefore(Snowflake.max)
-					.filter { it.author?.id == event.kord.selfId }
-					.collect {
-						if (it.content == "# ${system.name} ${system.tag ?: ""}".trimEnd()) {
-							foundHeader = true
-						} else if (it.embeds.size == 1) {
-							val embed = it.embeds.first()
-
-							val footerText: String? = embed.footer?.text
-							val headmateId = footerText?.takeLast(5)
-
-							if (footerText == null || !footerText.startsWith("Member ID:") || headmateId == null) {
-								potentialError = "Error, invalid footer found on message ${it.id}."
-
-								return@collect
-							}
-
-							foundHeadmates.add(headmateId)
-						}
-					}
-
-				if (potentialError != null) {
-					respond {
-						content = potentialError!!
-					}
-
-					return@action
-				}
-
-				val headmatesToAdd = system.members
-					.filter { it.id !in foundHeadmates }
-					.filter { !(it.id in headmatesToIgnore || it.name.lowercase() in headmatesToIgnore) }
-					.sortedBy { it.birthday ?: it.created }
-
-				val headerNeedsCreating = !foundHeader && headmatesToAdd.isNotEmpty()
-
-				if (headerNeedsCreating) {
-					if (foundHeadmates.isNotEmpty()) {
-						respond {
-							content = "Error, headmate embeds already exist without header, please delete these first."
-						}
-
-						return@action
-					}
-
-					channel.createMessage("# ${system.name} ${system.tag ?: ""}".trimEnd())
-				}
-
-				headmatesToAdd.forEach { headmate ->
-					val headmateTitle = headmate.displayName?.let {
-						val takeLength = headmate.pronouns?.length?.plus(3) ?: 0
-
-						it.take(it.length - takeLength)
-					} ?: headmate.name
-
-					channel.createEmbed {
-						title = headmateTitle
-						color = headmate.color?.let { Color(it.toInt(16)) } ?: DISCORD_BLURPLE
-						image = "https://raw.githubusercontent.com/CompassSystem/headmate-labeller/main/resources/filler.png"
-
-						thumbnail {
-							url = headmate.avatarUrl ?: "https://discord.com/assets/5d6a5e9d7d77ac29116e.png"
-						}
-
-						if (headmateTitle != headmate.name) {
-							field {
-								name = "Name"
-								value = headmate.name
-								inline = true
-							}
-						}
-
-						headmate.pronouns?.let {
-							field {
-								name = "Pronouns"
-								value = it
-								inline = true
-							}
-						}
-
-						headmate.proxyTags.let {
-							if (it.isNotEmpty()) {
-								field {
-									name = "Proxy Tags"
-									value = it.joinToString("\n") { proxy -> "`$proxy`" }
-									inline = true
-								}
-							}
-						}
-
-						footer { text = "Member ID: ${headmate.id}" }
-					}
-				}
-
-				respond {
-					content = "Created " + (if (headerNeedsCreating) "header and " else "") + "${headmatesToAdd.size} headmate embeds."
-				}
+				action { refreshSystem() }
 			}
 		}
+
+		system = try {
+			getPluralKitSystem()
+		} catch (e: Exception) {
+			logger.error(e) { "Failed to get PluralKit system." }
+
+			null
+		}
+	}
+
+	private suspend fun EphemeralSlashCommandContext<IgnoredHeadmateArgs, ModalForm>.upsertHeadmateList() {
+		val headmatesToIgnore = arguments.ignore?.lowercase()?.split(",")?.toSet() ?: emptySet()
+
+		val system = this@HeadmateLabellerExtension.system ?: run {
+			respond {
+				content = "Error, previously failed to get PluralKit system. Please run `/headmate-labeller refresh` first."
+			}
+
+			return
+		}
+
+		val channel = this.getChannel().asChannelOfOrNull<TextChannel>() ?: run {
+			respond {
+				content = "Error, invalid channel, must be run in a text channel."
+			}
+
+			return
+		}
+
+		var potentialError: String? = null
+		var foundHeader = false
+		val foundHeadmates = mutableSetOf<String>()
+
+		channel.withStrategy(EntitySupplyStrategy.rest)
+			.getMessagesBefore(Snowflake.max)
+			.filter { it.author?.id == event.kord.selfId }
+			.collect {
+				if (it.content == "# ${system.name} ${system.tag ?: ""}".trimEnd()) {
+					foundHeader = true
+				} else if (it.embeds.size == 1) {
+					val embed = it.embeds.first()
+
+					val footerText: String? = embed.footer?.text
+					val headmateId = footerText?.takeLast(5)
+
+					if (footerText == null || !footerText.startsWith("Member ID:") || headmateId == null) {
+						potentialError = "Error, invalid footer found on message ${it.id}."
+
+						return@collect
+					}
+
+					foundHeadmates.add(headmateId)
+				}
+			}
+
+		if (potentialError != null) {
+			respond {
+				content = potentialError!!
+			}
+
+			return
+		}
+
+		val headmatesToAdd = system.members
+			.filter { it.id !in foundHeadmates }
+			.filter { !(it.id in headmatesToIgnore || it.name.lowercase() in headmatesToIgnore) }
+			.sortedBy { it.birthday ?: it.created }
+
+		val headerNeedsCreating = !foundHeader && headmatesToAdd.isNotEmpty()
+
+		if (headerNeedsCreating) {
+			if (foundHeadmates.isNotEmpty()) {
+				respond {
+					content = "Error, headmate embeds already exist without header, please delete these first."
+				}
+
+				return
+			}
+
+			channel.createMessage("# ${system.name} ${system.tag ?: ""}".trimEnd())
+		}
+
+		headmatesToAdd.forEach { headmate ->
+			val headmateTitle = headmate.displayName?.let {
+				val takeLength = headmate.pronouns?.length?.plus(3) ?: 0
+
+				it.take(it.length - takeLength)
+			} ?: headmate.name
+
+			channel.createEmbed {
+				title = headmateTitle
+				color = headmate.color?.let { Color(it.toInt(16)) } ?: DISCORD_BLURPLE
+				image = "https://raw.githubusercontent.com/CompassSystem/headmate-labeller/main/resources/filler.png"
+
+				thumbnail {
+					url = headmate.avatarUrl ?: "https://discord.com/assets/5d6a5e9d7d77ac29116e.png"
+				}
+
+				if (headmateTitle != headmate.name) {
+					field {
+						name = "Name"
+						value = headmate.name
+						inline = true
+					}
+				}
+
+				headmate.pronouns?.let {
+					field {
+						name = "Pronouns"
+						value = it
+						inline = true
+					}
+				}
+
+				headmate.proxyTags.let {
+					if (it.isNotEmpty()) {
+						field {
+							name = "Proxy Tags"
+							value = it.joinToString("\n") { proxy -> "`$proxy`" }
+							inline = true
+						}
+					}
+				}
+
+				footer { text = "Member ID: ${headmate.id}" }
+			}
+		}
+
+		respond {
+			content = "Created " + (if (headerNeedsCreating) "header and " else "") + "${headmatesToAdd.size} headmate embeds."
+		}
+	}
+
+	private suspend fun EphemeralSlashCommandContext<IgnoredHeadmateArgs, ModalForm>.purgeHeadmateList() {
+		val headmatesToIgnore = arguments.ignore?.lowercase()?.split(",")?.toSet() ?: emptySet()
+
+		val system = this@HeadmateLabellerExtension.system ?: run {
+			respond {
+				content = "Error, previously failed to get PluralKit system. Please run `/headmate-labeller refresh` first."
+			}
+
+			return
+		}
+
+		val channel = this.getChannel().asChannelOfOrNull<TextChannel>() ?: run {
+			respond {
+				content = "Error, invalid channel, must be run in a text channel."
+			}
+
+			return
+		}
+
+		var deletedCount = 0
+
+		channel.withStrategy(EntitySupplyStrategy.rest)
+			.getMessagesBefore(Snowflake.max)
+			.filter { it.author?.id == event.kord.selfId }
+			.collect {
+				if (it.embeds.size == 1) {
+					val embed = it.embeds.first()
+
+					val footerText: String? = embed.footer?.text
+					val headmateName = embed.fields.find { field -> field.name == "Name" }?.value ?: embed.title!!
+					val headmateId = footerText?.takeLast(5)
+
+					if (!(headmateId in headmatesToIgnore || headmateName in headmatesToIgnore)) {
+						if (system.members.find { headmate -> headmate.id == headmateId } == null) {
+							it.delete()
+
+							deletedCount++
+						}
+					}
+				}
+			}
+
+		respond {
+			content = "Deleted $deletedCount headmate embeds."
+		}
+	}
+
+	private suspend fun EphemeralSlashCommandContext<Arguments, ModalForm>.refreshSystem() {
+		system = try {
+			getPluralKitSystem()
+		} catch (e: Exception) {
+			respond {
+				content = "Failed to refresh the PluralKit system."
+			}
+
+			logger.error(e) { "Failed to refresh the PluralKit system." }
+
+			return
+		}
+
+		respond {
+			content = "Refreshed PluralKit system."
+		}
+	}
+
+	private suspend fun getPluralKitSystem(): PkSystem {
+		val client = HttpClient(CIO) {
+			defaultRequest {
+				headers {
+					append("Authorization", pluralKitToken)
+					append("User-Agent", "headmate-labeller/2.0.0")
+				}
+			}
+
+			install(ContentNegotiation) {
+				json(Json {
+					ignoreUnknownKeys = true
+				})
+			}
+		}
+
+		val system = client.get("${apiBaseUrl}/systems/@me").body<PkSystem>()
+		val members = client.get("${apiBaseUrl}/systems/@me/members").body<List<PkMember>>()
+
+		return PkSystem(
+			system.id,
+			system.name,
+			system.tag,
+			members,
+			system.avatarUrl
+		)
 	}
 }
 
-class CreateListArgs : Arguments() {
-	val url by string {
-		name = "url"
-		description = "The url of the system export."
-	}
-
+class IgnoredHeadmateArgs : Arguments() {
 	val ignore by optionalString {
 		name = "ignore"
 		description = "Comma separated list of headmate ids or names to ignore."
