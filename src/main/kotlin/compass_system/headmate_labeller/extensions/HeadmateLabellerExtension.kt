@@ -3,6 +3,7 @@ package compass_system.headmate_labeller.extensions
 import com.kotlindiscord.kord.extensions.DISCORD_BLURPLE
 import com.kotlindiscord.kord.extensions.checks.hasPermission
 import com.kotlindiscord.kord.extensions.commands.Arguments
+import com.kotlindiscord.kord.extensions.commands.application.slash.ephemeralSubCommand
 import com.kotlindiscord.kord.extensions.commands.converters.impl.optionalString
 import com.kotlindiscord.kord.extensions.commands.converters.impl.string
 import com.kotlindiscord.kord.extensions.extensions.Extension
@@ -29,164 +30,168 @@ import kotlinx.serialization.json.Json
 class HeadmateLabellerExtension : Extension() {
 	override val name = "headmate-labeller"
 	override suspend fun setup() {
-		ephemeralSlashCommand(::CreateListArgs) {
-			name = "create-list"
-			description = "Create a new list of headmates."
+		ephemeralSlashCommand {
+			name = "headmate-labeller"
+			description = "Headmate labeller commands."
 
 			check { hasPermission(Permission.Administrator) }
 
-			action {
+			ephemeralSubCommand(::CreateListArgs) {
+				name = "list"
+				description = "Create or update a list of headmates."
 
-				val client = HttpClient(CIO) {
-					install(ContentNegotiation) {
-						json(Json {
-							ignoreUnknownKeys = true
-						})
-					}
-				}
-				val systemExportUrl = arguments.url
-				val headmatesToIgnore = arguments.ignore?.lowercase()?.split(",")?.toSet() ?: emptySet()
-
-				val response = try {
-					client.get(systemExportUrl)
-				} catch (e: Exception) {
-					respond {
-						content = "Error: ${e.message}"
-					}
-					return@action
-				}
-
-				if (response.status.value != 200) {
-					respond {
-						content = "Error, invalid response code: ${response.status}"
-					}
-					return@action
-				}
-
-				if (response.contentType()?.match(ContentType.Application.Json) == false) {
-					respond {
-						content = "Error, expected json, found: ${response.contentType()}"
-					}
-					return@action
-				}
-
-				val system = try {
-					response.body<PkSystem>()
-				} catch (e: Exception) {
-					respond {
-						content = "Error, invalid json: ${e.message}"
-					}
-					return@action
-				}
-
-				val channel = this.getChannel().asChannelOfOrNull<TextChannel>() ?: run {
-					respond {
-						content = "Error, invalid channel."
-					}
-					return@action
-				}
-
-				var potentialError: String? = null
-				var foundHeader = false
-				val foundHeadmates = mutableSetOf<String>()
-
-				channel.withStrategy(EntitySupplyStrategy.rest)
-					.getMessagesBefore(Snowflake.max)
-					.filter { it.author?.id == event.kord.selfId }
-					.collect {
-						if (it.content == "# ${system.name} ${system.tag ?: ""}".trimEnd()) {
-							foundHeader = true
-						} else if (it.embeds.size == 1) {
-							val embed = it.embeds.first()
-
-							val footerText: String? = embed.footer?.text
-							val headmateId = footerText?.takeLast(5)
-
-							if (footerText == null || !footerText.startsWith("Member ID:") || headmateId == null) {
-								potentialError = "Error, invalid footer found on message ${it.id}."
-
-								return@collect
-							}
-
-							foundHeadmates.add(headmateId)
+				action {
+					val client = HttpClient(CIO) {
+						install(ContentNegotiation) {
+							json(Json {
+								ignoreUnknownKeys = true
+							})
 						}
 					}
+					val systemExportUrl = arguments.url
+					val headmatesToIgnore = arguments.ignore?.lowercase()?.split(",")?.toSet() ?: emptySet()
 
-				if (potentialError != null) {
-					respond {
-						content = potentialError!!
+					val response = try {
+						client.get(systemExportUrl)
+					} catch (e: Exception) {
+						respond {
+							content = "Error: ${e.message}"
+						}
+						return@action
 					}
 
-					return@action
-				}
-
-				val headmatesToAdd = system.members
-					.filter { it.id !in foundHeadmates }
-					.filter { !(it.id in headmatesToIgnore || it.name.lowercase() in headmatesToIgnore) }
-					.sortedBy { it.birthday ?: it.created }
-
-				val headerNeedsCreating = !foundHeader && headmatesToAdd.isNotEmpty()
-
-				if (headerNeedsCreating) {
-					if (foundHeadmates.isNotEmpty()) {
+					if (response.status.value != 200) {
 						respond {
-							content = "Error, headmate embeds already exist without header, please delete these first."
+							content = "Error, invalid response code: ${response.status}"
+						}
+						return@action
+					}
+
+					if (response.contentType()?.match(ContentType.Application.Json) == false) {
+						respond {
+							content = "Error, expected json, found: ${response.contentType()}"
+						}
+						return@action
+					}
+
+					val system = try {
+						response.body<PkSystem>()
+					} catch (e: Exception) {
+						respond {
+							content = "Error, invalid json: ${e.message}"
+						}
+						return@action
+					}
+
+					val channel = this.getChannel().asChannelOfOrNull<TextChannel>() ?: run {
+						respond {
+							content = "Error, invalid channel."
+						}
+						return@action
+					}
+
+					var potentialError: String? = null
+					var foundHeader = false
+					val foundHeadmates = mutableSetOf<String>()
+
+					channel.withStrategy(EntitySupplyStrategy.rest)
+						.getMessagesBefore(Snowflake.max)
+						.filter { it.author?.id == event.kord.selfId }
+						.collect {
+							if (it.content == "# ${system.name} ${system.tag ?: ""}".trimEnd()) {
+								foundHeader = true
+							} else if (it.embeds.size == 1) {
+								val embed = it.embeds.first()
+
+								val footerText: String? = embed.footer?.text
+								val headmateId = footerText?.takeLast(5)
+
+								if (footerText == null || !footerText.startsWith("Member ID:") || headmateId == null) {
+									potentialError = "Error, invalid footer found on message ${it.id}."
+
+									return@collect
+								}
+
+								foundHeadmates.add(headmateId)
+							}
+						}
+
+					if (potentialError != null) {
+						respond {
+							content = potentialError!!
 						}
 
 						return@action
 					}
 
-					channel.createMessage("# ${system.name} ${system.tag ?: ""}".trimEnd())
-				}
+					val headmatesToAdd = system.members
+						.filter { it.id !in foundHeadmates }
+						.filter { !(it.id in headmatesToIgnore || it.name.lowercase() in headmatesToIgnore) }
+						.sortedBy { it.birthday ?: it.created }
 
-				headmatesToAdd.forEach { headmate ->
-					val headmateTitle = headmate.displayName?.let {
-						val takeLength = headmate.pronouns?.length?.plus(3) ?: 0
+					val headerNeedsCreating = !foundHeader && headmatesToAdd.isNotEmpty()
 
-						it.take(it.length - takeLength)
-					} ?: headmate.name
-
-					channel.createEmbed {
-						title = headmateTitle
-						color = headmate.color?.let { Color(it.toInt(16)) } ?: DISCORD_BLURPLE
-						image = "https://raw.githubusercontent.com/CompassSystem/headmate-labeller/main/resources/filler.png"
-
-						thumbnail {
-							url = headmate.avatarUrl ?: "https://discord.com/assets/5d6a5e9d7d77ac29116e.png"
-						}
-
-						if (headmateTitle != headmate.name) {
-							field {
-								name = "Name"
-								value = headmate.name
-								inline = true
+					if (headerNeedsCreating) {
+						if (foundHeadmates.isNotEmpty()) {
+							respond {
+								content = "Error, headmate embeds already exist without header, please delete these first."
 							}
+
+							return@action
 						}
 
-						headmate.pronouns?.let {
-							field {
-								name = "Pronouns"
-								value = it
-								inline = true
+						channel.createMessage("# ${system.name} ${system.tag ?: ""}".trimEnd())
+					}
+
+					headmatesToAdd.forEach { headmate ->
+						val headmateTitle = headmate.displayName?.let {
+							val takeLength = headmate.pronouns?.length?.plus(3) ?: 0
+
+							it.take(it.length - takeLength)
+						} ?: headmate.name
+
+						channel.createEmbed {
+							title = headmateTitle
+							color = headmate.color?.let { Color(it.toInt(16)) } ?: DISCORD_BLURPLE
+							image = "https://raw.githubusercontent.com/CompassSystem/headmate-labeller/main/resources/filler.png"
+
+							thumbnail {
+								url = headmate.avatarUrl ?: "https://discord.com/assets/5d6a5e9d7d77ac29116e.png"
 							}
-						}
 
-						headmate.proxyTags.let {
-							if (it.isNotEmpty()) {
+							if (headmateTitle != headmate.name) {
 								field {
-									name = "Proxy Tags"
-									value = it.joinToString("\n") { proxy -> "`$proxy`" }
+									name = "Name"
+									value = headmate.name
 									inline = true
 								}
 							}
+
+							headmate.pronouns?.let {
+								field {
+									name = "Pronouns"
+									value = it
+									inline = true
+								}
+							}
+
+							headmate.proxyTags.let {
+								if (it.isNotEmpty()) {
+									field {
+										name = "Proxy Tags"
+										value = it.joinToString("\n") { proxy -> "`$proxy`" }
+										inline = true
+									}
+								}
+							}
+
+							footer { text = "Member ID: ${headmate.id}" }
 						}
-
-						footer { text = "Member ID: ${headmate.id}" }
 					}
-				}
 
-				respond {
-					content = "Created " + (if (headerNeedsCreating) "header and " else "") + "${headmatesToAdd.size} headmate embeds."
+					respond {
+						content = "Created " + (if (headerNeedsCreating) "header and " else "") + "${headmatesToAdd.size} headmate embeds."
+					}
 				}
 			}
 		}
