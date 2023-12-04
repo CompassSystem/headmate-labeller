@@ -150,7 +150,12 @@ class HeadmateLabellerExtension(private val pluralKitToken: String) : Extension(
 			val headmateTitle = headmate.displayName?.let {
 				val takeLength = headmate.pronouns?.length?.plus(3) ?: 0
 
-				it.take(it.length - takeLength)
+				if (takeLength >= it.length) {
+					it.substring(0, it.lastIndexOf(' '))
+				} else {
+					it.take(it.length - takeLength)
+				}
+
 			} ?: headmate.name
 
 			channel.createEmbed {
